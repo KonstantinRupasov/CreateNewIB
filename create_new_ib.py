@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """
 Create a new 1C infobase and publish it to IIS
-Command line parameters:
     - 1: The name of the new IB (examle: my_new_ib)
 """
 import pyodbc as db
@@ -36,10 +35,11 @@ TEMPLATE_NAME = '1ctrade_template'   #1C IB name
 TEMPLATE_USER = 'root'
 TEMPLATE_PWD = 'root'
 ONE_C_PATH = 'C:\\Program Files (x86)\\1cv8\\8.3.7.2027\\bin\\'
-ONE_C_CREATE_IB_TEMPLATE_STR = '1cv8 CREATEINFOBASE Srvr=localhost;Ref={0};DBMS=MSSQLServer;DBSrvr={1};DBUID={2};DBPwd={3};DB={0}; /AddInList {0} /Out C:\\Rupasov\\CreateNewIB\\1c_log.txt'
+ONE_C_CREATE_IB_TEMPLATE_STR = '1cv8 CREATEINFOBASE Srvr=localhost;Ref={0};DBMS=MSSQLServer;DBSrvr={1};DBUID={2};DBPwd={3};DB={0}; /SLev1 /AddInList {0}'
 IIS_APP_CMD = 'C:\\Windows\\System32\\inetsrv\\appcmd.exe'
 IIS_SITE_NAME = 'Default Web Site'
 WWW_ROOT_PATH = 'C:\\inetpub\\wwwroot\\'
+LOG_2_FILE = False
 LOG_PATH = 'C:\CreateNewIB\LOG'
 
 def _exit(err_text, err_code):
@@ -53,9 +53,13 @@ def _exit(err_text, err_code):
         - FileAlreadyExists: file with the same name already exists
         - AppCmdError: Error running appcmd.exe
     """
-    print('**** ERROR ****', file=log)
-    print(err_text, file=log)
-    log.close()
+    if LOG_2_FILE:
+        print('**** ERROR ****', file=log)
+        print(err_text, file=log)
+        log.close()
+    else:
+        print('**** ERROR ****')
+        print(err_text)
     sys.exit(err_code)
     
 def _copy_file(src_file, dst_file):
@@ -70,14 +74,18 @@ def _copy_file(src_file, dst_file):
         _exit('File (%s) already exists' % dst_file, 'FileAlreadyExists')
     #Copy src file to dts file
     try:
-        shutil.copyfile(src_file, dst_file)
+        shutil.copy(src_file, dst_file)
     except Exception as exc:
         _exit('Error copying file:' + str(exc), 'ErrorCopyingFile')
 
 def _log(messages):
     for message in messages:
-        print(message, file=log)
-    log.flush()
+        if LOG_2_FILE:
+            print(message, file=log)
+        else:
+            print(message)
+    if LOG_2_FILE:
+        log.flush()
     
 """
 Check the command line parameters
@@ -116,7 +124,8 @@ sql_str = "CREATE DATABASE \"{}\" ON (FILENAME = '{}'), (FILENAME = '{}') FOR AT
         new_ib_name, 
         MSSQL_DB_FILES_PATH + new_ib_name + '.mdf', 
         MSSQL_DB_FILES_PATH + new_ib_name + '_Log.ldf')
-_log(['About to execute this TSQL statement to attach the new IB database:', sql_str])
+_log(['-------------------------------------',
+      'About to execute this TSQL statement to attach the new IB database:', sql_str])
 
 """
 Attach new IB files to MS SQL
@@ -130,107 +139,81 @@ except Exception as exc:
 _log(['Database %s is attached sucessfully' % new_ib_name])
 
 """
-Create a new 1C IB
-"""
-os.chdir(ONE_C_PATH)
-command = ONE_C_CREATE_IB_TEMPLATE_STR.format(new_ib_name, MSSQL_SERVER_NAME, MSSQL_USER_NAME, MSSQL_USER_PASS)
-_log(['About to create a new 1C infobase with command:', command])
-log.flush()
-try:
-    os.system(command)
-except Exception as exc:
-    _exit('Error creating 1C IB' + str(exc), 'ErrorCreatingIB')
-_log(['New 1C infobase {} is created'.format(new_ib_name)])
-log.flush()
-
-"""
-Copy template IIS publication to new IB publication
-"""
-src = WWW_ROOT_PATH + TEMPLATE_NAME
-dst = WWW_ROOT_PATH + new_ib_name
-try:
-    shutil.copytree(src, dst)
-except FileNotFoundError:
-    _exit('Cannot find the template publication directory: %s' % src, 'FileNotFound')
-_log(['Template IIS publication is copied to', dst])
-    
-"""
-Replace publication name and IB name n file default.vrd
-"""
-#Read the file into memory
-dv_file_name = dst + '\default.vrd'
-if not os.path.isfile(dv_file_name):
-    _exit('File (%s) does not exist' % dv_file_name, 'FileNotFound')
-dv_file = open(dv_file_name, 'r')
-default_vrd_text = dv_file.read()
-dv_file.close()
-#Reopen the file to write
-dv_file = open(dv_file_name, 'w')
-#Replace publication name
-source_str = 'base="/{}"'.format(TEMPLATE_NAME)
-result_str = 'base="/{}"'.format(new_ib_name)
-default_vrd_text = default_vrd_text.replace(source_str, result_str)
-#Replace IB name
-source_str = 'Ref=&quot;{}'.format(TEMPLATE_NAME)
-result_str = 'Ref=&quot;{}'.format(new_ib_name)
-default_vrd_text = default_vrd_text.replace(source_str, result_str)
-dv_file.write(default_vrd_text)
-dv_file.close()
-_log(['defaul.vrd file is changed'])
-
-"""
-Add application to IIS
-"""
-command = '{} add app /site.name:"{}" /path:/{} /physicalPath:{}{}'.format(
-        IIS_APP_CMD,
-        IIS_SITE_NAME,
-        new_ib_name,
-        WWW_ROOT_PATH,
-        new_ib_name)
-_log(['About to create new IIS aplication. Command:', command])
-try:
-    os.system(command)
-except Exception as exc:
-    _exit('Cannot create ISS application', 'AppCmdError')
-_log(['IIS app is created sucessfully'])
-
-"""
 Run ras in order to make possible the following actions (available only through rac):
     - Set secutiry profile for the infobase
     - Set "Allow license issuing by 1C:Enterprise Server"
 """
+_log(['-------------------------------------',
+      'Checking if RAS is running'])
 res = sub.call('tasklist | findstr ras.exe', shell=True)    #Check if ras is running
 if not res == 0:                                            #Ras is not running
-    _log(['Ras is not found. Running ras...'])
+    _log(['RAS is not found. Running RAS...'])
     res = sub.call('ras.exe cluster', shell=True)
     if not res == 0:                                            
         _exit('Cannot run ras.exe', 'AppCmdError')
 _log(['Ras is running'])
 
 """
-Change new 1C IB settings
+Create a new 1C IB
 """
+os.chdir(ONE_C_PATH)
+#Get cluster GUID
 res = sub.check_output('rac.exe cluster list').decode('utf-8')
 match = re.search(r'cluster\s*: ', res)
 cluster_guid_pos = match.end()
 cluster_guid = res[cluster_guid_pos:cluster_guid_pos+36]
 _log(['cluster={}'.format(cluster_guid)])
-res = sub.check_output('rac.exe infobase --cluster={} summary list'.format(cluster_guid)).decode('utf-8')
-#print(res)
-match = re.search(r'name\s*: {}'.format(new_ib_name), res)
-infobase_giud_pos = match.start()-38
-infobase_guid = res[infobase_giud_pos : infobase_giud_pos+36]
-_log(['infobase={}'.format(infobase_guid)])
-#print(infobase_guid)
+#command = ONE_C_CREATE_IB_TEMPLATE_STR.format(new_ib_name, MSSQL_SERVER_NAME, MSSQL_USER_NAME, MSSQL_USER_PASS)
+command = 'rac infobase \
+--cluster={cluster} \
+create --name={name} \
+--dbms=MSSQLServer --db-server={db_server} \
+--db-user={db_user} --db-pwd={db_pwd} \
+--db-name={db_name} --locale=pl --date-offset=2000 --security-level=1 \
+--license-distribution=allow'.format(name=new_ib_name,
+                                     cluster=cluster_guid,
+                                     db_server=MSSQL_SERVER_NAME, 
+                                     db_user=MSSQL_USER_NAME, 
+                                     db_pwd=MSSQL_USER_PASS,
+                                     db_name=new_ib_name)
+_log(['-------------------------------------', 
+      'About to create a new 1C infobase with command:', command])
+try:
+    #os.system(command)
+    res = sub.check_output(command)
+    #Get infobase GUID
+    infobase_guid = res[11:].decode('utf-8')            #res format is "infobase : XXXXXXXX"
+except Exception as exc:
+    _exit('Error creating 1C IB' + str(exc), 'ErrorCreatingIB')
+_log([res, 'New 1C infobase {} is created'.format(new_ib_name), 'IB GUID={}'.format(infobase_guid)])
+
+"""
+Change IB security profile
+"""
 command = 'rac infobase --cluster={} \
 update --infobase={} --infobase-user={} --infobase-pwd={} \
---license-distribution=allow --security-profile-name=userbase'.format(
+--security-profile-name=userbase --safe-mode-security-profile-name=userbase'.format(
         cluster_guid, 
         infobase_guid,
         TEMPLATE_USER,
         TEMPLATE_PWD)
-_log(['About to run this commant in order to turn on server license distribution and security profile',
+_log(['-------------------------------------', 
+      'About to run this commant in order to set up security profiles',
       command])
 res = sub.check_output(command)
+_log([res, 'Securty profiles are set up'])
+
+"""
+Publish the IB to IIS
+"""
+command = 'webinst -publish -iis \
+-wsdir {ib_name} -dir C:\inetpub\wwwroot\{ib_name} \
+-connstr Srvr=localhost;Ref={ib_name}'. format(ib_name=new_ib_name)
+_log(['-------------------------------------', 
+      'About to run this commant in order to publish IB to IIS',
+      command])
+res = sub.check_output(command, shell=True)
+_log([res, 'IB is published'])
+
 _log(['All DONE'])
 log.close()
