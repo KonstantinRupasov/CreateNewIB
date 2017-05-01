@@ -206,9 +206,11 @@ _log([res, 'Securty profiles are set up'])
 """
 Publish the IB to IIS
 """
+vrd_template = WWW_ROOT_PATH + TEMPLATE_NAME + '\\default.vrd'
 command = 'webinst -publish -iis \
 -wsdir {ib_name} -dir C:\inetpub\wwwroot\{ib_name} \
--connstr Srvr=localhost;Ref={ib_name}'. format(ib_name=new_ib_name)
+-connstr Srvr=localhost;Ref={ib_name} \
+-descriptor {vrd_template}'. format(ib_name=new_ib_name, vrd_template=vrd_template)
 _log(['-------------------------------------', 
       'About to run this commant in order to publish IB to IIS',
       command])
