@@ -21,6 +21,7 @@ MSSQL_SERVER_NAME = 'NS3521530'
 MSSQL_USER_NAME = 'sa'
 MSSQL_USER_PASS = '14GiVv5S'
 MSSQL_DB_FILES_PATH = 'C:\\Program Files\\Microsoft SQL Server\\MSSQL11.MSSQLSERVER\\MSSQL\\DATA\\'
+MSSQL_BACKUP_PATH = 'C:\\Dropbox (1C-Poland)\\BACKUPS\\'
 """
 TEMPLATE_NAME = 1C IB name
                 IIS publication name
@@ -137,6 +138,23 @@ except Exception as exc:
     _exit('Error copying file:' + str(exc), 'ErrorCopyingFile')
 
 _log(['Database %s is attached sucessfully' % new_ib_name])
+
+"""
+Create a full database backup
+in order for Backup jobs to be able to run
+"""
+_backup_path = MSSQL_BACKUP_PATH + new_ib_name
+sql_str = "BACKUP DATABASE [{db_name}] TO  DISK = N'{backup_path}\\first_full_backup.bak' \
+WITH  RETAINDAYS = 1, NOFORMAT, NOINIT, NAME = N'first_full_backup', SKIP, REWIND, NOUNLOAD,  \
+STATS = 10".format(db_name=new_ib_name, backup_path=_backup_path)
+_log(['-------------------------------------',
+      'About to create the first full backup of the database:', sql_str])
+try:
+    os.mkdir(_backup_path)
+    cursor.execute(sql_str)
+    cursor.commit()
+except Exception as exc:
+    _exit('Error making the first full backup:' + str(exc), 'ErrorMakingFullBackup')
 
 """
 Run ras in order to make possible the following actions (available only through rac):
